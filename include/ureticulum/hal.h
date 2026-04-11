@@ -35,6 +35,11 @@ ur_task_t* ur_hal_task_spawn(const char* name,
 
 void ur_hal_watchdog_feed(void);
 
+/* Cryptographic-quality entropy. POSIX reads /dev/urandom. FreeRTOS firmware
+ * is expected to back this with the MCU's TRNG (nRF: nrf_rng, STM32: RNG
+ * peripheral, etc). Returns 0 on success, non-zero on failure. */
+int ur_hal_random_bytes(uint8_t* buf, size_t len);
+
 /* May be called from multiple tasks — implementation must serialize. */
 void ur_hal_log_write(const char* line, size_t len);
 

@@ -62,6 +62,14 @@ ur_task_t* ur_hal_task_spawn(const char* name,
 
 __attribute__((weak)) void ur_hal_watchdog_feed(void) {}
 
+__attribute__((weak)) int ur_hal_random_bytes(uint8_t* buf, size_t len) {
+    /* Firmware MUST override this with a real TRNG. The default returns -1
+     * so any caller that forgets to wire it up fails fast instead of using
+     * predictable bytes. */
+    (void)buf; (void)len;
+    return -1;
+}
+
 __attribute__((weak)) void ur_hal_log_write_impl(const char* line, size_t len) {
     fwrite(line, 1, len, stdout);
 }

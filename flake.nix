@@ -23,6 +23,9 @@
             gcc
             clang-tools
 
+            mbedtls
+            monocypher
+
             gcc-arm-embedded
 
             openocd

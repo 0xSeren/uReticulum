@@ -11,12 +11,31 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+find_package(MbedTLS QUIET)
+if(NOT MbedTLS_FOUND)
+    find_library(MBEDTLS_CRYPTO_LIB NAMES mbedcrypto REQUIRED)
+    find_library(MBEDTLS_X509_LIB   NAMES mbedx509)
+    find_library(MBEDTLS_TLS_LIB    NAMES mbedtls)
+    find_path(MBEDTLS_INCLUDE_DIR mbedtls/sha256.h REQUIRED)
+endif()
+
+find_library(MONOCYPHER_LIB NAMES monocypher REQUIRED)
+find_path(MONOCYPHER_INCLUDE_DIR monocypher.h REQUIRED)
+
 add_library(ureticulum STATIC
     src/log.cpp
     src/os.cpp
     src/crc.cpp
     src/memory.cpp
     src/bytes.cpp
+    src/cryptography/hashes.cpp
+    src/cryptography/hmac.cpp
+    src/cryptography/hkdf.cpp
+    src/cryptography/aes.cpp
+    src/cryptography/ed25519.cpp
+    src/cryptography/x25519.cpp
+    src/cryptography/fernet.cpp
+    src/cryptography/token.cpp
     third_party/tlsf/tlsf.c
 )
 
@@ -25,6 +44,16 @@ target_include_directories(ureticulum
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tlsf
 )
+
+if(MbedTLS_FOUND)
+    target_link_libraries(ureticulum PUBLIC MbedTLS::mbedcrypto)
+else()
+    target_include_directories(ureticulum PUBLIC ${MBEDTLS_INCLUDE_DIR})
+    target_link_libraries(ureticulum PUBLIC ${MBEDTLS_CRYPTO_LIB})
+endif()
+
+target_include_directories(ureticulum PUBLIC ${MONOCYPHER_INCLUDE_DIR})
+target_link_libraries(ureticulum PUBLIC ${MONOCYPHER_LIB})
 
 target_compile_options(ureticulum PRIVATE
     -Wall -Wextra -Wno-unused-parameter
@@ -69,6 +98,7 @@ if(URETICULUM_BUILD_TESTS AND URETICULUM_PORT STREQUAL "posix")
         test/test_bytes.cpp
         test/test_pkcs7.cpp
         test/test_tlsf.cpp
+        test/test_crypto.cpp
     )
     target_include_directories(ureticulum_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/doctest

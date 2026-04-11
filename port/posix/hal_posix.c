@@ -79,6 +79,15 @@ ur_task_t* ur_hal_task_spawn(const char* name,
 
 void ur_hal_watchdog_feed(void) { /* no watchdog on POSIX */ }
 
+int ur_hal_random_bytes(uint8_t* buf, size_t len) {
+    if (buf == NULL || len == 0) return 0;
+    FILE* f = fopen("/dev/urandom", "rb");
+    if (f == NULL) return -1;
+    size_t n = fread(buf, 1, len, f);
+    fclose(f);
+    return (n == len) ? 0 : -1;
+}
+
 static pthread_mutex_t s_log_mu = PTHREAD_MUTEX_INITIALIZER;
 
 void ur_hal_log_write(const char* line, size_t len) {
