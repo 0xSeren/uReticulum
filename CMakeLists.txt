@@ -36,6 +36,13 @@ add_library(ureticulum STATIC
     src/cryptography/x25519.cpp
     src/cryptography/fernet.cpp
     src/cryptography/token.cpp
+    src/identity.cpp
+    src/destination.cpp
+    src/packet.cpp
+    src/interface.cpp
+    src/transport.cpp
+    src/reticulum.cpp
+    src/interfaces/loopback.cpp
     third_party/tlsf/tlsf.c
 )
 
@@ -99,6 +106,8 @@ if(URETICULUM_BUILD_TESTS AND URETICULUM_PORT STREQUAL "posix")
         test/test_pkcs7.cpp
         test/test_tlsf.cpp
         test/test_crypto.cpp
+        test/test_identity.cpp
+        test/test_loopback.cpp
     )
     target_include_directories(ureticulum_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/doctest
