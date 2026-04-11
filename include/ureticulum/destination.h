@@ -46,8 +46,11 @@ namespace RNS {
         Bytes decrypt(const Bytes& data) const;
         Bytes sign(const Bytes& message) const;
 
-        /* Invoked by the loopback path when a packet matching this destination
-         * arrives. Phase 4 Transport calls this from its routing engine. */
+        /* Build (and optionally broadcast) an announce packet for this
+         * destination. Returns the packed raw frame. SINGLE / IN only. */
+        Bytes announce(const Bytes& app_data = Bytes{Bytes::NONE}, bool send = true) const;
+
+        /* Invoked by Transport when a packet matching this destination arrives. */
         void receive(const Bytes& plaintext, const Packet& packet) const;
 
         Type::Destination::types      type()      const { return _object->_type; }

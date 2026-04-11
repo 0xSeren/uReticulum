@@ -108,6 +108,7 @@ if(URETICULUM_BUILD_TESTS AND URETICULUM_PORT STREQUAL "posix")
         test/test_crypto.cpp
         test/test_identity.cpp
         test/test_loopback.cpp
+        test/test_transport.cpp
     )
     target_include_directories(ureticulum_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/doctest

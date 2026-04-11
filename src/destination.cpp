@@ -3,6 +3,10 @@
 #include <stdexcept>
 #include <string.h>
 
+#include "ureticulum/cryptography/random.h"
+#include "ureticulum/packet.h"
+#include "ureticulum/transport.h"
+
 namespace RNS {
 
 namespace TD = Type::Destination;
@@ -86,6 +90,35 @@ Bytes Destination::sign(const Bytes& message) const {
 
 void Destination::receive(const Bytes& plaintext, const Packet& packet) const {
     if (_object && _object->_packet_callback) _object->_packet_callback(plaintext, packet);
+}
+
+Bytes Destination::announce(const Bytes& app_data, bool send) const {
+    if (!_object || _object->_type != TD::SINGLE || _object->_direction != TD::IN)
+        throw std::invalid_argument("Only SINGLE+IN destinations can be announced");
+
+    Bytes random_hash = Cryptography::random(Type::Identity::RANDOM_HASH_LENGTH / 8);
+
+    Bytes signed_data;
+    signed_data << _object->_hash
+                << _object->_identity.get_public_key()
+                << _object->_name_hash
+                << random_hash;
+    if (!app_data.empty()) signed_data << app_data;
+
+    Bytes signature = _object->_identity.sign(signed_data);
+
+    Bytes announce_data;
+    announce_data << _object->_identity.get_public_key()
+                  << _object->_name_hash
+                  << random_hash
+                  << signature;
+    if (!app_data.empty()) announce_data << app_data;
+
+    Packet announce_packet(*this, announce_data, Type::Packet::ANNOUNCE);
+    announce_packet.pack();
+    Bytes raw = announce_packet.raw();
+    if (send) Transport::broadcast(raw);
+    return raw;
 }
 
 }
