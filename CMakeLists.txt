@@ -14,11 +14,16 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_library(ureticulum STATIC
     src/log.cpp
     src/os.cpp
+    src/crc.cpp
+    src/memory.cpp
+    src/bytes.cpp
+    third_party/tlsf/tlsf.c
 )
 
 target_include_directories(ureticulum
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tlsf
 )
 
 target_compile_options(ureticulum PRIVATE
@@ -53,4 +58,22 @@ endif()
 if(URETICULUM_BUILD_EXAMPLES AND URETICULUM_PORT STREQUAL "posix")
     add_executable(ureticulum_smoke examples/smoke/main.cpp)
     target_link_libraries(ureticulum_smoke PRIVATE ureticulum)
+endif()
+
+option(URETICULUM_BUILD_TESTS "Build host unit tests with doctest" ON)
+
+if(URETICULUM_BUILD_TESTS AND URETICULUM_PORT STREQUAL "posix")
+    add_executable(ureticulum_tests
+        test/test_main.cpp
+        test/test_crc.cpp
+        test/test_bytes.cpp
+        test/test_pkcs7.cpp
+        test/test_tlsf.cpp
+    )
+    target_include_directories(ureticulum_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/doctest
+    )
+    target_link_libraries(ureticulum_tests PRIVATE ureticulum)
+    enable_testing()
+    add_test(NAME ureticulum_tests COMMAND ureticulum_tests)
 endif()
