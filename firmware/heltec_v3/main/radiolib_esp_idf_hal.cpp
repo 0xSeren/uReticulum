@@ -80,16 +80,21 @@ void EspIdfHal::spiBegin() {
     spi_bus_initialize((spi_host_device_t)_spi_host, &bus, SPI_DMA_CH_AUTO);
 
     spi_device_interface_config_t dev = {};
-    dev.clock_speed_hz = 8 * 1000 * 1000;  /* 8 MHz — well within SX1262 limits */
+    dev.clock_speed_hz = 2 * 1000 * 1000;  /* 2 MHz — conservative for bring-up; SX126x handles up to 16 MHz */
     dev.mode           = 0;
-    dev.spics_io_num   = _nss;
+    /* CS is managed by RadioLib itself via digitalWrite on the NSS pin
+     * (that's what the Module class does around every transfer). Letting
+     * ESP-IDF also drive CS causes them to fight and leaves the chip
+     * unselected during the transfer → SPI_CMD_TIMEOUT. Set -1 so the
+     * hardware peripheral ignores CS. */
+    dev.spics_io_num   = -1;
     dev.queue_size     = 1;
     spi_device_handle_t handle;
     spi_bus_add_device((spi_host_device_t)_spi_host, &dev, &handle);
     _spi_device = handle;
 }
 
-void EspIdfHal::spiBeginTransaction() { /* device handle owns CS, nothing to do */ }
+void EspIdfHal::spiBeginTransaction() { /* RadioLib drives CS manually */ }
 void EspIdfHal::spiEndTransaction()   {}
 
 void EspIdfHal::spiTransfer(uint8_t* out, size_t len, uint8_t* in) {

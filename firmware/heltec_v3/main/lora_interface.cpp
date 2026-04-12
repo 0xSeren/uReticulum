@@ -45,6 +45,11 @@ bool LoraInterface::start() {
                                    HELTEC_V3_LORA_RST,
                                    HELTEC_V3_LORA_BUSY));
 
+    /* TCXO voltage: Heltec V3 uses a 32 MHz TCXO powered from SX1262 DIO3
+     * at 1.8V. Passing 0.0f disables TCXO entirely → SPI_CMD_TIMEOUT on
+     * the first command because the radio has no reference clock. The
+     * last bool enables SX1262 DIO2 as RF switch, which Heltec V3 uses
+     * for TX/RX path steering. */
     int state = _radio->begin(HELTEC_V3_LORA_FREQ_MHZ,
                               HELTEC_V3_LORA_BANDWIDTH_KHZ,
                               HELTEC_V3_LORA_SPREADING_FACTOR,
@@ -52,8 +57,8 @@ bool LoraInterface::start() {
                               RADIOLIB_SX126X_SYNC_WORD_PRIVATE,
                               HELTEC_V3_LORA_TX_POWER_DBM,
                               HELTEC_V3_LORA_PREAMBLE_LENGTH,
-                              0.0f,
-                              false);
+                              1.8f,
+                              true);
     if (state != RADIOLIB_ERR_NONE) {
         ESP_LOGE(TAG, "SX1262 begin failed: %d", state);
         return false;
