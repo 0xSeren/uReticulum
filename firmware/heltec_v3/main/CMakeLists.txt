@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "main.cpp"
+        "lora_interface.cpp"
+        "radiolib_esp_idf_hal.cpp"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        ureticulum
+        driver
+        esp_timer
+        jgromes__RadioLib
+)

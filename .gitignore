@@ -1,2 +1,11 @@
 build/
+build-cross-check/
 README.html
+
+# ESP-IDF firmware build artifacts
+firmware/*/build/
+firmware/*/managed_components/
+firmware/*/sdkconfig
+firmware/*/sdkconfig.old
+firmware/*/dependencies.lock
+firmware/*/.cache/
