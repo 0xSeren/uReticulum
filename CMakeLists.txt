@@ -115,6 +115,7 @@ if(URETICULUM_BUILD_TESTS AND URETICULUM_PORT STREQUAL "posix")
         test/test_link.cpp
         test/test_filesystem.cpp
         test/test_reticulum_task.cpp
+        test/test_transport_concurrency.cpp
     )
     target_include_directories(ureticulum_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/doctest

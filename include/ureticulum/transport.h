@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <map>
+#include <mutex>
 #include <set>
 #include <vector>
 
@@ -61,6 +62,13 @@ namespace RNS {
         static void reset();
 
     private:
+        /* Recursive because the inbound→process_announce→broadcast→loopback
+         * peer→handle_incoming→Transport::inbound chain re-enters on the
+         * same thread when running with the in-process LoopbackInterface.
+         * Real (out-of-process) interfaces don't need recursion, but the
+         * cost is negligible and it lets host tests use loopback freely. */
+        static std::recursive_mutex                             _mutex;
+
         static std::vector<std::shared_ptr<InterfaceImpl>>      _interfaces;
         static std::map<Bytes, Destination>                     _destinations;
         static std::map<Bytes, PathEntry>                       _path_table;
