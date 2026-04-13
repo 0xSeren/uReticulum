@@ -30,4 +30,11 @@ namespace HeltecV3::Oled {
     /* Push the framebuffer to the SSD1306. */
     void flush();
 
+    /* Power-save the panel. SSD1306 0xAE: display off, GDDRAM preserved.
+     * Call suspend() before entering a period where APB clock transitions
+     * (due to light sleep wake/sleep) could glitch the I2C bus. */
+    void suspend();
+    void resume();
+    bool is_suspended();
+
 }

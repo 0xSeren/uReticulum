@@ -10,17 +10,20 @@
 #include <stdio.h>
 #include <string>
 
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_pm.h"
+#include "esp_sleep.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_freertos_hooks.h"
 
 #include "ureticulum/destination.h"
 #include "ureticulum/identity.h"
 #include "ureticulum/reticulum.h"
 #include "ureticulum/transport.h"
 
+#include "heltec_v3_pins.h"
 #include "lora_interface.h"
 #include "oled.h"
 
@@ -30,17 +33,22 @@ namespace {
     std::atomic<uint32_t> g_announce_count{0};
     std::atomic<uint32_t> g_rx_count{0};
 
-    /* CPU idle-time tracking. We sample the IDLE task's runtime counter
-     * at the start of each OLED refresh window and compute the delta vs
-     * total wall-clock in that window. The result is an idle percentage
-     * that tracks the real duty cycle of the CPU between interrupts. */
+    /* ISR-set flag for the PRG button (GPIO0, active LOW, external pullup). */
+    volatile bool g_button_pressed = false;
+    void IRAM_ATTR on_button_isr(void*) { g_button_pressed = true; }
+
+    /* Display-on timeout: OLED stays visible for this many ms after the
+     * user last pressed the button, then suspends. With the panel off
+     * the I2C bus is idle and APB clock glitches from light sleep
+     * wake/sleep transitions can't corrupt visible pixels. */
+    constexpr uint32_t DISPLAY_ON_MS = 15000;
+    uint64_t g_display_off_at_ms = 0;
+
     uint64_t g_last_idle_us  = 0;
     uint64_t g_last_total_us = 0;
 
-    /* ESP32-S3 is dual-core; each core has its own IDLE task. We sum both
-     * idle task runtime counters, then divide by 2 and by the total runtime
-     * window to get a "per-core average" idle percentage where 100% means
-     * both cores are fully idle. */
+    /* ESP32-S3 dual-core idle percentage averaged across both cores.
+     * 100% = both IDLE tasks got all the CPU time in the sample window. */
     uint32_t measure_idle_percent() {
         TaskStatus_t status[10];
         uint32_t total_runtime = 0;
@@ -56,22 +64,18 @@ namespace {
                 idle_tasks_found++;
             }
         }
-
         uint32_t delta_idle  = idle_runtime  - (uint32_t)g_last_idle_us;
         uint32_t delta_total = total_runtime - (uint32_t)g_last_total_us;
         g_last_idle_us  = idle_runtime;
         g_last_total_us = total_runtime;
-
         if (delta_total == 0 || idle_tasks_found == 0) return 0;
         return (uint32_t)((uint64_t)delta_idle * 100 / (delta_total * idle_tasks_found));
     }
 
-    /* Render a concise 8-line status page. */
     void render_status(const std::string& id_hex,
                        const std::string& dst_hex,
                        uint32_t idle_pct) {
         HeltecV3::Oled::clear();
-
         HeltecV3::Oled::print(0, 0, "uReticulum");
         HeltecV3::Oled::hline(9);
 
@@ -81,8 +85,6 @@ namespace {
         snprintf(line, sizeof(line), "DST %.12s", dst_hex.c_str());
         HeltecV3::Oled::print(3, 0, line);
 
-        /* Row 4: CPU idle % — proxy for power savings. 100% idle ≈ MCU
-         * spending all its time in WFI / light sleep between interrupts. */
         snprintf(line, sizeof(line), "CPU idle %u%%", (unsigned)idle_pct);
         HeltecV3::Oled::print(4, 0, line);
 
@@ -95,25 +97,44 @@ namespace {
 
         HeltecV3::Oled::flush();
     }
+
+    uint64_t now_ms() { return (uint64_t)(esp_timer_get_time() / 1000); }
 }
 
 extern "C" void app_main() {
     ESP_LOGI(TAG, "uReticulum on Heltec V3 starting");
 
-    /* Dynamic frequency scaling: CPU clocks down to 40 MHz when idle,
-     * back up to 160 MHz when there's work. Saves most of the achievable
-     * MCU power without the I2C clock glitches that true light sleep
-     * causes on the OLED bus. True light_sleep_enable=true produces
-     * visible OLED flicker because APB transitions between 40 and 80 MHz
-     * corrupt the SSD1306 command stream. */
+    /* Dynamic frequency scaling only. True light_sleep_enable=true causes
+     * the 3.3V rail to dip 50-100 mV on every wake/sleep transition as
+     * the MCU's current draw changes, and the Heltec V3 OLED sits on the
+     * same rail — result is visible flicker. DFS alone still saves most
+     * of the MCU power (CPU clocks down to 40 MHz when idle) without
+     * touching the rail. A future rev could shorten I2C traces, add a
+     * decoupling cap, or power the OLED from a separate LDO — then we
+     * can re-enable light sleep for the last 10 mA of savings. */
     esp_pm_config_t pm_config = {};
     pm_config.max_freq_mhz       = 160;
     pm_config.min_freq_mhz       = 40;
     pm_config.light_sleep_enable = false;
     esp_err_t pm_rc = esp_pm_configure(&pm_config);
-    ESP_LOGI(TAG, "esp_pm_configure = %d (DFS 40-160 MHz)", (int)pm_rc);
+    ESP_LOGI(TAG, "esp_pm_configure = %d (DFS 40-160 MHz, light sleep off)", (int)pm_rc);
 
-    /* Bring up the OLED first so we can show status during bring-up. */
+    /* PRG button on GPIO0 — internal pull-up, falling-edge interrupt for
+     * press detection while awake, low-level wake source for pulling the
+     * MCU out of light sleep. */
+    gpio_config_t btn_cfg = {};
+    btn_cfg.pin_bit_mask = (1ULL << HELTEC_V3_BUTTON_PRG);
+    btn_cfg.mode         = GPIO_MODE_INPUT;
+    btn_cfg.pull_up_en   = GPIO_PULLUP_ENABLE;
+    btn_cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    btn_cfg.intr_type    = GPIO_INTR_NEGEDGE;
+    gpio_config(&btn_cfg);
+    gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+    gpio_isr_handler_add((gpio_num_t)HELTEC_V3_BUTTON_PRG, on_button_isr, nullptr);
+    gpio_wakeup_enable((gpio_num_t)HELTEC_V3_BUTTON_PRG, GPIO_INTR_LOW_LEVEL);
+    esp_sleep_enable_gpio_wakeup();
+
+    /* Bring up the OLED so the user can see the boot sequence. */
     bool oled_up = HeltecV3::Oled::init();
     if (oled_up) {
         HeltecV3::Oled::clear();
@@ -123,7 +144,6 @@ extern "C" void app_main() {
         HeltecV3::Oled::flush();
     }
 
-    /* Bring up the LoRa interface. */
     auto lora = HeltecV3::LoraInterface::create();
     if (!lora->start()) {
         ESP_LOGE(TAG, "LoRa interface failed to start, halting");
@@ -140,7 +160,6 @@ extern "C" void app_main() {
         HeltecV3::Oled::flush();
     }
 
-    /* Create identity + SINGLE/IN destination. */
     RNS::Identity identity;
     RNS::Destination dest(identity,
                           RNS::Type::Destination::IN,
@@ -154,9 +173,6 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "identity hash: %s", id_hex.c_str());
     ESP_LOGI(TAG, "destination hash: %s", dst_hex.c_str());
 
-    /* Global on_announce hook — bumps RX count whenever Transport validates
-     * an incoming announce. Good sanity check that the radio receive path
-     * is healthy. */
     RNS::Transport::on_announce([](const RNS::Bytes& dh, const RNS::Identity&, const RNS::Bytes&) {
         (void)dh;
         g_rx_count.fetch_add(1);
@@ -166,14 +182,39 @@ extern "C" void app_main() {
         ESP_LOGE(TAG, "Reticulum::start failed");
     }
 
-    /* Initial status render. */
-    if (oled_up) render_status(id_hex, dst_hex, 0);
+    /* Display stays on for DISPLAY_ON_MS after boot so the user can read
+     * the identity hash. */
+    if (oled_up) {
+        render_status(id_hex, dst_hex, 0);
+        g_display_off_at_ms = now_ms() + DISPLAY_ON_MS;
+    }
 
-    /* Loop with 5 s ticks so idle % samples frequently. Announce every 6
-     * ticks (30 s). */
     uint32_t tick = 0;
     while (true) {
-        if (tick % 6 == 0) {
+        uint64_t t = now_ms();
+
+        /* Button press → wake display. */
+        if (g_button_pressed) {
+            g_button_pressed = false;
+            ESP_LOGI(TAG, "button pressed, waking display");
+            if (oled_up && HeltecV3::Oled::is_suspended()) {
+                HeltecV3::Oled::resume();
+            }
+            g_display_off_at_ms = t + DISPLAY_ON_MS;
+        }
+
+        /* Display timeout → suspend OLED. */
+        if (oled_up && !HeltecV3::Oled::is_suspended() && t >= g_display_off_at_ms) {
+            ESP_LOGI(TAG, "display timeout, suspending OLED");
+            HeltecV3::Oled::suspend();
+        }
+
+        /* Announce once at boot (tick==0) then every 5 minutes. Real
+         * Reticulum applications announce far less often — once at boot,
+         * on network-state change, and maybe every few hours for path
+         * freshness. 5 min here is a compromise for bring-up testing so
+         * the RX counter on the peer moves at a pace you can see. */
+        if (tick == 0 || tick % 300 == 0) {
             ESP_LOGI(TAG, "announcing %s", dst_hex.c_str());
             try {
                 dest.announce(RNS::Bytes("hello from heltec v3"));
@@ -183,15 +224,20 @@ extern "C" void app_main() {
             }
         }
 
-        uint32_t idle = measure_idle_percent();
-        ESP_LOGI(TAG, "tick=%u idle=%u%% TX=%u RX=%u",
-                 (unsigned)tick, (unsigned)idle,
-                 (unsigned)g_announce_count.load(),
-                 (unsigned)g_rx_count.load());
-
-        if (oled_up) render_status(id_hex, dst_hex, idle);
+        /* Log idle % every 5 ticks; redraw OLED only when it's visible. */
+        if (tick % 5 == 0) {
+            uint32_t idle = measure_idle_percent();
+            ESP_LOGI(TAG, "tick=%u idle=%u%% TX=%u RX=%u disp=%s",
+                     (unsigned)tick, (unsigned)idle,
+                     (unsigned)g_announce_count.load(),
+                     (unsigned)g_rx_count.load(),
+                     HeltecV3::Oled::is_suspended() ? "off" : "on");
+            if (oled_up && !HeltecV3::Oled::is_suspended()) {
+                render_status(id_hex, dst_hex, idle);
+            }
+        }
 
         tick++;
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

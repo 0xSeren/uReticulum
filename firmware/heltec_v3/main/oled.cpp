@@ -18,9 +18,10 @@ namespace {
      * pages, each page a vertical slice of 8 pixels (LSB at top). */
     uint8_t g_fb[1024];
 
-    i2c_master_bus_handle_t g_bus    = nullptr;
-    i2c_master_dev_handle_t g_dev    = nullptr;
-    bool                    g_ready  = false;
+    i2c_master_bus_handle_t g_bus      = nullptr;
+    i2c_master_dev_handle_t g_dev      = nullptr;
+    bool                    g_ready    = false;
+    bool                    g_suspended = false;
 
     constexpr uint8_t SSD1306_ADDR = 0x3C;
 
@@ -160,12 +161,29 @@ bool init() {
 }
 
 void flush() {
-    if (!g_ready && g_dev == nullptr) return;
+    if (!g_ready || g_suspended) return;
     i2c_cmd(0x21); i2c_cmd(0x00); i2c_cmd(0x7F);
     i2c_cmd(0x22); i2c_cmd(0x00); i2c_cmd(0x07);
     for (int page = 0; page < 8; ++page) {
         i2c_data_row(g_fb + page * WIDTH, WIDTH);
     }
 }
+
+void suspend() {
+    if (!g_ready || g_suspended) return;
+    i2c_cmd(0xAE);  /* display off — panel dark, GDDRAM preserved */
+    g_suspended = true;
+}
+
+void resume() {
+    if (!g_ready || !g_suspended) return;
+    /* Re-push the full framebuffer in case the GDDRAM was corrupted by
+     * I2C clock glitches during light sleep. Then re-enable the display. */
+    g_suspended = false;
+    flush();
+    i2c_cmd(0xAF);  /* display on */
+}
+
+bool is_suspended() { return g_suspended; }
 
 }
