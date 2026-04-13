@@ -1,0 +1,35 @@
+# Overlay that switches the Heltec V3 firmware into RNode-over-BLE mode.
+# Use together with the base defaults:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.rnode_ble" build flash
+CONFIG_HELTEC_V3_MODE_TRANSPORT=n
+CONFIG_HELTEC_V3_MODE_RNODE=n
+CONFIG_HELTEC_V3_MODE_RNODE_BLE=y
+
+# Keep runtime logs enabled — in BLE mode UART0 is only used for host
+# debug output, so ESP_LOG noise is fine there. Handy for watching the
+# NimBLE security manager trace during pairing.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+
+# Bluetooth controller + NimBLE host, BLE-only (ESP32-S3 has no classic
+# BT). Peripheral role + broadcaster for advertising.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
+
+# Security manager: Python RNS requires the BLE device to be bonded
+# before it will connect, so we need SMP enabled and bonding stored in
+# NVS. LE Secure Connections with Just Works (no IO capability) lets
+# the host pair via `bluetoothctl pair <addr>` without us having a
+# screen or keypad for a passkey.
+CONFIG_BT_NIMBLE_SM_SC=y
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+
+# Enable a larger flash partition for the bigger BT-enabled image.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

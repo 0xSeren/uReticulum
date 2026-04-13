@@ -5,6 +5,7 @@ idf_component_register(
         "radiolib_esp_idf_hal.cpp"
         "oled.cpp"
         "rnode_bridge.cpp"
+        "rnode_ble_bridge.cpp"
     INCLUDE_DIRS
         "."
     REQUIRES
@@ -14,4 +15,6 @@ idf_component_register(
         esp_driver_uart
         esp_timer
         jgromes__RadioLib
+        bt
+        nvs_flash
 )

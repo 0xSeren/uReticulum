@@ -15,12 +15,21 @@ menu "uReticulum Heltec V3"
                 local destination, and opens Links to peers over LoRa.
 
         config HELTEC_V3_MODE_RNODE
-            bool "RNode bridge (host-controlled)"
+            bool "RNode bridge over USB UART"
             help
                 Exposes the SX1262 to a USB host via the RNode KISS
                 serial protocol so Python RNS (nomadnet, rnsd, etc.)
                 can drive it as an rnode interface. The uReticulum stack
                 is not started in this mode; the board is a dumb radio.
+
+        config HELTEC_V3_MODE_RNODE_BLE
+            bool "RNode bridge over Bluetooth LE"
+            help
+                Same KISS bridge as the UART variant, but wrapped in a
+                Nordic UART Service GATT profile so Python RNS can
+                connect over BLE with `port = ble://RNode XXXX`. Useful
+                for driving the radio from a phone or tablet. Pulls in
+                NimBLE and adds ~300 KB to the firmware image.
 
     endchoice
 

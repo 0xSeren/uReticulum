@@ -30,6 +30,7 @@
 #include "heltec_v3_pins.h"
 #include "lora_interface.h"
 #include "oled.h"
+#include "rnode_ble_bridge.h"
 #include "rnode_bridge.h"
 
 static const char* TAG = "app";
@@ -139,6 +140,16 @@ extern "C" void app_main() {
         while (true) vTaskDelay(pdMS_TO_TICKS(1000));
     }
     HeltecV3::RNodeBridge::run(lora);  /* never returns */
+}
+#elif CONFIG_HELTEC_V3_MODE_RNODE_BLE
+extern "C" void app_main() {
+    /* Same as RNode UART mode, but the host speaks KISS over a Nordic
+     * UART Service GATT profile instead of USB serial. */
+    auto lora = HeltecV3::LoraInterface::create();
+    if (!lora->start()) {
+        while (true) vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    HeltecV3::RNodeBleBridge::run(lora);  /* never returns */
 }
 #else
 extern "C" void app_main() {
