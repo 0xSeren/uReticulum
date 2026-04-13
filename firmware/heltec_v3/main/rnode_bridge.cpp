@@ -15,10 +15,13 @@
 #include "heltec_v3_pins.h"
 #include "lora_interface.h"
 
-/* RNode KISS protocol constants — kept aligned with upstream
- * RNode_Firmware/Framing.h so that Python RNS RNodeInterface treats us
- * as a stock Heltec V3 RNode. */
-namespace {
+/* Transport-agnostic RNode KISS core. Parser, protocol state, and
+ * command handlers live in HeltecV3::RNodeKiss so both the UART
+ * (RNodeBridge) and BLE (RNodeBleBridge) transports can share them;
+ * each transport installs its own TxSink. Protocol constants match
+ * upstream RNode_Firmware/Framing.h so Python RNS RNodeInterface
+ * treats us as a stock Heltec V3 RNode. */
+namespace HeltecV3::RNodeKiss {
 
     constexpr uint8_t FEND  = 0xC0;
     constexpr uint8_t FESC  = 0xDB;
@@ -55,77 +58,53 @@ namespace {
     constexpr uint8_t RADIO_STATE_ON  = 0x01;
 
     constexpr uint8_t ERROR_INITRADIO = 0x01;
-    constexpr uint8_t ERROR_TXFAILED  = 0x02;
 
-    /* Board identity bytes RNode advertises to the host. These match the
-     * entries in RNode_Firmware/Boards.h so Python RNS draws the right
-     * platform label. MAJ/MIN picked to match a recent upstream release —
-     * Python RNS doesn't refuse old versions, it just logs them. */
+    /* Board identity bytes RNode advertises to the host. Match
+     * RNode_Firmware/Boards.h so Python RNS draws the right platform
+     * label. MAJ/MIN picked to match a recent upstream release — Python
+     * RNS doesn't refuse old versions, it just logs them. */
     constexpr uint8_t MAJ_VERS        = 0x01;
     constexpr uint8_t MIN_VERS        = 0x55;
     constexpr uint8_t PLATFORM_ESP32  = 0x80;
     constexpr uint8_t MCU_ESP32       = 0x81;
     constexpr uint8_t BOARD_HELTEC_V3 = 0x3A;
 
-    /* KISS decoder max payload. CMD_DATA frames from the host can be up
-     * to Reticulum MTU + RNode header byte; allow a bit of slack. */
+    /* KISS max payload. CMD_DATA frames from the host can be up to
+     * Reticulum MTU + RNode header byte; allow a bit of slack. */
     constexpr size_t FRAME_MAX = 600;
 
-    struct RssiSnr {
-        float rssi = -292.0f;
-        float snr  = 0.0f;
-    };
-    RssiSnr g_last;
-
-    /* Live radio parameter cache. Python RNS uses "query" forms (4-byte
-     * zero payload for frequency/bandwidth, 0xFF for sf/cr/txpower/state)
-     * to ask the device to report its current settings, and validates
-     * those readbacks against what it just configured. We have to track
-     * what was last set so we can answer queries with real values, not
-     * with the literal payload bytes the host sent. Defaults match the
-     * Heltec V3 boot configuration in lora_interface.cpp. */
+    /* Live radio parameter cache. Python RNS uses query forms (4-byte
+     * zero payload for frequency/bandwidth, 0xFF for sf/cr/txpower/
+     * state) to read current settings back and validate them against
+     * what it just configured. We track what was last set so we can
+     * answer queries with real values, not with the literal payload
+     * bytes the host sent. Defaults match the Heltec V3 boot settings
+     * in lora_interface.cpp. */
     struct RadioCfg {
         uint32_t freq_hz = 915000000u;
         uint32_t bw_hz   = 125000u;
         uint8_t  sf      = 9;
         uint8_t  cr      = 7;
         int8_t   txp     = 14;
-        uint8_t  state   = 0x01;  /* RADIO_STATE_ON */
+        uint8_t  state   = RADIO_STATE_ON;
     };
-    RadioCfg g_cfg;
 
-    /* Forward decl so the cache helpers below can call send_frame
-     * (defined further down once we have the UART helpers in place). */
-    void send_frame(uint8_t cmd, const uint8_t* data, size_t len);
+    /* Module-local state. This file is the only writer, all writes run
+     * on the transport task so no locking. */
+    static std::shared_ptr<LoraInterface> g_lora;
+    static TxSink g_tx = nullptr;
+    static RadioCfg g_cfg;
 
-    void send_freq() {
-        uint8_t b[4] = {
-            (uint8_t)((g_cfg.freq_hz >> 24) & 0xFF),
-            (uint8_t)((g_cfg.freq_hz >> 16) & 0xFF),
-            (uint8_t)((g_cfg.freq_hz >>  8) & 0xFF),
-            (uint8_t)( g_cfg.freq_hz        & 0xFF),
-        };
-        send_frame(CMD_FREQUENCY, b, 4);
-    }
-    void send_bw() {
-        uint8_t b[4] = {
-            (uint8_t)((g_cfg.bw_hz >> 24) & 0xFF),
-            (uint8_t)((g_cfg.bw_hz >> 16) & 0xFF),
-            (uint8_t)((g_cfg.bw_hz >>  8) & 0xFF),
-            (uint8_t)( g_cfg.bw_hz        & 0xFF),
-        };
-        send_frame(CMD_BANDWIDTH, b, 4);
-    }
+    static bool    in_frame    = false;
+    static bool    escape      = false;
+    static uint8_t current_cmd = CMD_UNKNOWN;
+    static uint8_t frame_buf[FRAME_MAX];
+    static size_t  frame_len   = 0;
 
-    constexpr uart_port_t UART = UART_NUM_0;
-
-    /* Build a complete KISS frame in a stack buffer and ship it in a
-     * single uart_write_bytes call. We earlier had byte-at-a-time writes
-     * via either ROM polling or per-call uart_write_bytes; the per-call
-     * variant raced with itself when emitting many short responses
-     * back-to-back, dropping some on the floor. One write per frame
-     * sidesteps the race. */
-    void send_frame(uint8_t cmd, const uint8_t* data, size_t len) {
+    /* Write a KISS-framed response. Escapes payload bytes that look
+     * like FEND or FESC so the host parser won't mis-segment us. */
+    static void send_frame(uint8_t cmd, const uint8_t* data, size_t len) {
+        if (!g_tx) return;
         uint8_t buf[FRAME_MAX * 2 + 4];
         size_t  o = 0;
         buf[o++] = FEND;
@@ -137,68 +116,54 @@ namespace {
             else                { buf[o++] = b; }
         }
         buf[o++] = FEND;
-        uart_write_bytes(UART, (const char*)buf, o);
-        /* Block until the TX FIFO has drained so the host sees responses
-         * arrive promptly even when we emit several frames back-to-back.
-         * Without this, the IDF driver's TX ISR runs lazily and frames
-         * trickle out over many ms — long enough for Python RNS's 250ms
-         * validation window to expire before all bytes have actually
-         * left the chip. */
-        uart_wait_tx_done(UART, portMAX_DELAY);
+        g_tx(buf, o);
     }
 
-    void send_u8(uint8_t cmd, uint8_t value) {
+    static void send_u8(uint8_t cmd, uint8_t value) {
         send_frame(cmd, &value, 1);
     }
 
-    /* Post-RX host indications. Python RNS expects STAT_RSSI and STAT_SNR
-     * frames immediately before the CMD_DATA frame so it can attach them
-     * to the received packet. */
-    void send_stat_rssi(float rssi_dbm) {
-        /* Python decodes as (rssi_byte - RSSI_OFFSET) where offset = 157. */
+    static void send_error(uint8_t code) { send_u8(CMD_ERROR, code); }
+
+    static void send_freq() {
+        uint8_t b[4] = {
+            (uint8_t)((g_cfg.freq_hz >> 24) & 0xFF),
+            (uint8_t)((g_cfg.freq_hz >> 16) & 0xFF),
+            (uint8_t)((g_cfg.freq_hz >>  8) & 0xFF),
+            (uint8_t)( g_cfg.freq_hz        & 0xFF),
+        };
+        send_frame(CMD_FREQUENCY, b, 4);
+    }
+    static void send_bw() {
+        uint8_t b[4] = {
+            (uint8_t)((g_cfg.bw_hz >> 24) & 0xFF),
+            (uint8_t)((g_cfg.bw_hz >> 16) & 0xFF),
+            (uint8_t)((g_cfg.bw_hz >>  8) & 0xFF),
+            (uint8_t)( g_cfg.bw_hz        & 0xFF),
+        };
+        send_frame(CMD_BANDWIDTH, b, 4);
+    }
+
+    /* Python RNS expects STAT_RSSI + STAT_SNR immediately before a
+     * CMD_DATA frame so it can attach them to the received packet. */
+    static void send_stat_rssi(float rssi_dbm) {
         int32_t v = (int32_t)rssi_dbm + 157;
         if (v < 0)   v = 0;
         if (v > 255) v = 255;
         send_u8(CMD_STAT_RSSI, (uint8_t)v);
     }
-
-    void send_stat_snr(float snr_db) {
-        /* Python decodes as int8 / 4. Clamp to signed 8-bit range. */
+    static void send_stat_snr(float snr_db) {
         int32_t v = (int32_t)(snr_db * 4.0f);
         if (v < -128) v = -128;
         if (v >  127) v =  127;
         send_u8(CMD_STAT_SNR, (uint8_t)(int8_t)v);
     }
 
-    void send_error(uint8_t code) {
-        send_u8(CMD_ERROR, code);
-    }
-
-    void indicate_ready() {
-        send_u8(CMD_READY, 0x01);
-    }
-
-    /* KISS decoder state. Persists across uart_read_bytes() calls. */
-    bool    in_frame = false;
-    bool    escape   = false;
-    uint8_t current_cmd = CMD_UNKNOWN;
-    uint8_t frame_buf[FRAME_MAX];
-    size_t  frame_len = 0;
-
-    void reset_frame() {
-        in_frame = false;
-        escape   = false;
-        current_cmd = CMD_UNKNOWN;
-        frame_len = 0;
-    }
-
-    std::shared_ptr<HeltecV3::LoraInterface> g_lora;
-
-    void handle_frame() {
+    static void handle_frame() {
         switch (current_cmd) {
             case CMD_DATA: {
                 if (frame_len == 0) break;
-                g_lora->send_raw(frame_buf, frame_len);
+                if (g_lora) g_lora->send_raw(frame_buf, frame_len);
                 break;
             }
             case CMD_FREQUENCY: {
@@ -208,7 +173,7 @@ namespace {
                                 | ((uint32_t)frame_buf[2] <<  8)
                                 |  (uint32_t)frame_buf[3];
                     if (hz != 0) {
-                        if (g_lora->set_frequency_mhz((float)hz / 1000000.0f)) {
+                        if (g_lora && g_lora->set_frequency_mhz((float)hz / 1000000.0f)) {
                             g_cfg.freq_hz = hz;
                         } else {
                             send_error(ERROR_INITRADIO);
@@ -225,7 +190,7 @@ namespace {
                                 | ((uint32_t)frame_buf[2] <<  8)
                                 |  (uint32_t)frame_buf[3];
                     if (hz != 0) {
-                        if (g_lora->set_bandwidth_khz((float)hz / 1000.0f)) {
+                        if (g_lora && g_lora->set_bandwidth_khz((float)hz / 1000.0f)) {
                             g_cfg.bw_hz = hz;
                         } else {
                             send_error(ERROR_INITRADIO);
@@ -238,7 +203,7 @@ namespace {
             case CMD_SF: {
                 if (frame_len == 1) {
                     if (frame_buf[0] != 0xFF) {
-                        if (g_lora->set_spreading_factor(frame_buf[0])) {
+                        if (g_lora && g_lora->set_spreading_factor(frame_buf[0])) {
                             g_cfg.sf = frame_buf[0];
                         } else {
                             send_error(ERROR_INITRADIO);
@@ -251,7 +216,7 @@ namespace {
             case CMD_CR: {
                 if (frame_len == 1) {
                     if (frame_buf[0] != 0xFF) {
-                        if (g_lora->set_coding_rate(frame_buf[0])) {
+                        if (g_lora && g_lora->set_coding_rate(frame_buf[0])) {
                             g_cfg.cr = frame_buf[0];
                         } else {
                             send_error(ERROR_INITRADIO);
@@ -265,7 +230,7 @@ namespace {
                 if (frame_len == 1) {
                     if (frame_buf[0] != 0xFF) {
                         int8_t dbm = (int8_t)frame_buf[0];
-                        if (g_lora->set_tx_power_dbm(dbm)) {
+                        if (g_lora && g_lora->set_tx_power_dbm(dbm)) {
                             g_cfg.txp = dbm;
                         } else {
                             send_error(ERROR_INITRADIO);
@@ -279,7 +244,7 @@ namespace {
                 if (frame_len == 1) {
                     if (frame_buf[0] != 0xFF) {
                         bool want = (frame_buf[0] == RADIO_STATE_ON);
-                        if (g_lora->set_radio_online(want)) {
+                        if (g_lora && g_lora->set_radio_online(want)) {
                             g_cfg.state = want ? RADIO_STATE_ON : RADIO_STATE_OFF;
                         } else {
                             send_error(ERROR_INITRADIO);
@@ -325,22 +290,45 @@ namespace {
             case CMD_RADIO_LOCK:
             case CMD_STAT_RX:
             case CMD_STAT_TX:
-                /* No-op / stub: we acknowledge parse but don't implement. */
+                /* No-op / stub: we parse but don't implement. */
                 break;
             default:
                 break;
         }
     }
 
-    /* Feed one byte into the KISS decoder. KISS frames share boundary
-     * FENDs — the closing FEND of frame N is the same byte as the
-     * opening FEND of frame N+1, so a stream like:
+    static void on_lora_rx(const uint8_t* data, size_t len, float rssi, float snr) {
+        /* Match upstream RNode ordering: STAT_RSSI + STAT_SNR first,
+         * then the DATA frame. Python RNS RNodeInterface.processIncoming
+         * reads them in this order and caches them for the next
+         * CMD_DATA. */
+        send_stat_rssi(rssi);
+        send_stat_snr(snr);
+        send_frame(CMD_DATA, data, len);
+    }
+
+    void attach(std::shared_ptr<LoraInterface> lora, TxSink tx) {
+        g_lora = std::move(lora);
+        g_tx   = tx;
+        if (g_lora) g_lora->set_raw_rx_callback(on_lora_rx);
+    }
+
+    /* Transport run loops poll this to drain any LoRa RX queued by the
+     * DIO1 ISR. The LoraInterface::loop() implementation calls back
+     * into on_lora_rx for each received packet, which frames it and
+     * emits via the installed TxSink. */
+    void poll_lora() {
+        if (g_lora) g_lora->loop();
+    }
+
+    /* KISS parser. KISS frames share boundary FENDs — the closing FEND
+     * of frame N is the same byte as the opening FEND of frame N+1, so
+     * a stream like
      *   FEND CMD_A data FEND CMD_B data FEND
      * contains TWO frames, not one. We process the previous frame on
-     * FEND, then immediately stay in_frame=true and clear cmd/buf so
-     * the bytes that follow start a new frame. (Empty frames between
-     * back-to-back FENDs are no-ops, which matches upstream RNode
-     * behaviour.) */
+     * FEND, then stay in_frame=true and clear cmd/buf so the following
+     * bytes start a new frame. Empty frames between back-to-back FENDs
+     * are no-ops, which matches upstream RNode behaviour. */
     void feed_byte(uint8_t b) {
         if (b == FEND) {
             if (in_frame && current_cmd != CMD_UNKNOWN) handle_frame();
@@ -367,15 +355,24 @@ namespace {
         if (frame_len < FRAME_MAX) frame_buf[frame_len++] = b;
     }
 
-    void on_lora_rx(const uint8_t* data, size_t len, float rssi, float snr) {
-        g_last.rssi = rssi;
-        g_last.snr  = snr;
-        /* Match upstream RNode ordering: STAT_RSSI + STAT_SNR first, then
-         * the DATA frame. Python RNS RNodeInterface.processIncoming reads
-         * them in this order and caches them for the next CMD_DATA. */
-        send_stat_rssi(rssi);
-        send_stat_snr(snr);
-        send_frame(CMD_DATA, data, len);
+    void indicate_ready() { send_u8(CMD_READY, 0x01); }
+
+}
+
+/* UART transport — installs the KISS core over UART0. */
+namespace {
+
+    constexpr uart_port_t UART = UART_NUM_0;
+
+    /* TxSink hook: ship one full KISS frame through UART0. Block until
+     * the TX FIFO drains so the host sees responses arrive promptly
+     * even when we emit several frames back-to-back. Without the wait,
+     * the IDF driver's TX ISR runs lazily and frames trickle out over
+     * many ms — long enough for Python RNS's 250 ms validation window
+     * to expire before all bytes have actually left the chip. */
+    void uart_tx_sink(const uint8_t* data, size_t len) {
+        uart_write_bytes(UART, (const char*)data, len);
+        uart_wait_tx_done(UART, portMAX_DELAY);
     }
 
 }
@@ -398,9 +395,7 @@ void run(std::shared_ptr<LoraInterface> lora) {
     pm_cfg.light_sleep_enable = false;
     esp_pm_configure(&pm_cfg);
 
-    /* LED heartbeat — lets us distinguish "app never ran" from "app ran
-     * but UART TX isn't going out". Heltec V3 LED is active HIGH on
-     * GPIO35. */
+    /* LED solid-on to show we reached run(). */
     gpio_reset_pin((gpio_num_t)HELTEC_V3_LED);
     gpio_set_direction((gpio_num_t)HELTEC_V3_LED, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)HELTEC_V3_LED, 1);
@@ -413,8 +408,8 @@ void run(std::shared_ptr<LoraInterface> lora) {
      * responses come back. XTAL clock is independent of DFS so the baud
      * stays correct regardless of CPU frequency.
      *
-     * uart_param_config must run BEFORE driver_install. The driver picks
-     * up whatever clock source is configured at install time. */
+     * uart_param_config must run BEFORE driver_install. The driver
+     * picks up whatever clock source is configured at install time. */
     uart_config_t cfg = {};
     cfg.baud_rate  = 115200;
     cfg.data_bits  = UART_DATA_8_BITS;
@@ -425,24 +420,19 @@ void run(std::shared_ptr<LoraInterface> lora) {
     uart_param_config(UART, &cfg);
     uart_driver_install(UART, 2048, 2048, 0, nullptr, 0);
 
-    g_lora = std::move(lora);
-    g_lora->set_raw_rx_callback(on_lora_rx);
+    RNodeKiss::attach(std::move(lora), uart_tx_sink);
+    RNodeKiss::indicate_ready();
 
-    /* Announce ready so the host doesn't sit in its connect timeout. */
-    indicate_ready();
-
-    /* Read one byte at a time with a long-ish poll timeout. The previous
-     * read-256-with-10ms-timeout approach occasionally tore frames apart
-     * across read calls when the host sent a burst right while we were
-     * busy sending a response, dropping bytes between consecutive frame
-     * delimiters. Single-byte reads keep the parser tightly synchronised
-     * with the wire. */
+    /* Read one byte at a time with a long-ish poll timeout. The
+     * read-256-with-10ms-timeout approach occasionally tore frames
+     * apart across read calls when the host sent a burst right while
+     * we were busy sending a response. Single-byte reads keep the
+     * parser tightly synchronised with the wire. */
     while (true) {
         uint8_t b;
         int n = uart_read_bytes(UART, &b, 1, pdMS_TO_TICKS(2));
-        if (n == 1) feed_byte(b);
-        /* Drain any radio RX the interface task polled. */
-        g_lora->loop();
+        if (n == 1) RNodeKiss::feed_byte(b);
+        RNodeKiss::poll_lora();
     }
 }
 
