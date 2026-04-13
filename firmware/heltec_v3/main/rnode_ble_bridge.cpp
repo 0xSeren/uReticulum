@@ -1,3 +1,6 @@
+#include "sdkconfig.h"
+#if CONFIG_BT_ENABLED
+
 #include "rnode_ble_bridge.h"
 #include "rnode_bridge.h"   /* RNodeKiss::attach / feed_byte / etc. */
 
@@ -223,6 +226,16 @@ namespace {
                 }
                 break;
 
+            case BLE_GAP_EVENT_REPEAT_PAIRING: {
+                /* A peer we've previously bonded with is re-pairing
+                 * (e.g. after an NVS erase or host-side key removal).
+                 * Delete the old bond and let the new pairing proceed. */
+                struct ble_gap_conn_desc desc;
+                ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc);
+                ble_store_util_delete_peer(&desc.peer_id_addr);
+                return BLE_GAP_REPEAT_PAIRING_RETRY;
+            }
+
             case BLE_GAP_EVENT_SUBSCRIBE:
                 if (event->subscribe.cur_notify) {
                     /* Defer the CMD_READY emit — see g_pending_ready. */
@@ -381,3 +394,5 @@ void run(std::shared_ptr<LoraInterface> lora) {
 }
 
 }
+
+#endif  /* CONFIG_BT_ENABLED */
