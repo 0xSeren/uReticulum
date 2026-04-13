@@ -67,18 +67,41 @@ namespace {
      * 247 / 244. We start at the minimum and raise on MTU exchange. */
     static uint16_t g_notify_mtu = 20;
 
-    /* Handle incoming writes on the RX characteristic by feeding each
-     * byte into the shared KISS parser. */
+    /* Pending "send CMD_READY on next main-loop tick" flag. We can't
+     * emit notifications from inside the BLE_GAP_EVENT_SUBSCRIBE
+     * handler: that fires on the NimBLE host task while it's still
+     * processing the CCCD write, and calling ble_gattc_notify_custom
+     * re-entrantly returns 0x0E (ATT Unlikely Error) back to the
+     * central. Defer the emit to run()'s main loop. */
+    static volatile bool g_pending_ready = false;
+
+    /* RX ring between the NUS write callback (NimBLE host task) and
+     * the main bridge loop that runs RNodeKiss::feed_byte. We can't
+     * feed bytes directly from the access callback because feed_byte
+     * may emit a response frame via send_frame -> ble_gattc_notify_
+     * custom, and that re-enters the NimBLE GATT machinery while it's
+     * still processing the incoming write. The resulting error
+     * propagates back to the central as ATT 0x0E (Unlikely Error). */
+    constexpr size_t RX_RING_SIZE = 2048;
+    static uint8_t   g_rx_ring[RX_RING_SIZE];
+    static volatile size_t g_rx_head = 0;  /* producer — NimBLE task */
+    static volatile size_t g_rx_tail = 0;  /* consumer — bridge loop */
+
+    /* Handle incoming writes on the RX characteristic by queuing each
+     * byte into the RX ring. The main bridge loop feeds the KISS
+     * parser from the other end. */
     static int nus_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                              struct ble_gatt_access_ctxt* ctxt, void* arg) {
         (void)conn_handle; (void)attr_handle; (void)arg;
         if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
-            const uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
             uint8_t buf[512];
             uint16_t copied = 0;
             if (ble_hs_mbuf_to_flat(ctxt->om, buf, sizeof(buf), &copied) == 0) {
                 for (uint16_t i = 0; i < copied; ++i) {
-                    HeltecV3::RNodeKiss::feed_byte(buf[i]);
+                    size_t next = (g_rx_head + 1) % RX_RING_SIZE;
+                    if (next == g_rx_tail) break;  /* full — drop */
+                    g_rx_ring[g_rx_head] = buf[i];
+                    g_rx_head = next;
                 }
             }
             return 0;
@@ -202,9 +225,8 @@ namespace {
 
             case BLE_GAP_EVENT_SUBSCRIBE:
                 if (event->subscribe.cur_notify) {
-                    /* Central just enabled notifications on TX char —
-                     * good moment to tell it we're alive. */
-                    HeltecV3::RNodeKiss::indicate_ready();
+                    /* Defer the CMD_READY emit — see g_pending_ready. */
+                    g_pending_ready = true;
                 }
                 break;
         }
@@ -303,9 +325,11 @@ void run(std::shared_ptr<LoraInterface> lora) {
 
     int rc;
     rc = ble_gatts_count_cfg(nus_svcs);
-    if (rc != 0) ESP_LOGE(TAG, "gatts_count_cfg: %d", rc);
+    ESP_LOGI(TAG, "ble_gatts_count_cfg = %d", rc);
     rc = ble_gatts_add_svcs(nus_svcs);
-    if (rc != 0) ESP_LOGE(TAG, "gatts_add_svcs: %d", rc);
+    ESP_LOGI(TAG, "ble_gatts_add_svcs  = %d", rc);
+    rc = ble_gatts_start();
+    ESP_LOGI(TAG, "ble_gatts_start     = %d (tx_val_handle=%u)", rc, g_nus_tx_val_handle);
 
     ble_hs_cfg.sync_cb          = on_sync;
     ble_hs_cfg.store_status_cb  = ble_store_util_status_rr;
@@ -337,6 +361,16 @@ void run(std::shared_ptr<LoraInterface> lora) {
      * host writes come through the GATT access callback from the
      * NimBLE host task. */
     while (true) {
+        if (g_pending_ready && g_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+            g_pending_ready = false;
+            RNodeKiss::indicate_ready();
+        }
+        /* Drain any bytes the NUS write callback queued. */
+        while (g_rx_tail != g_rx_head) {
+            uint8_t b = g_rx_ring[g_rx_tail];
+            g_rx_tail = (g_rx_tail + 1) % RX_RING_SIZE;
+            RNodeKiss::feed_byte(b);
+        }
         RNodeKiss::poll_lora();
         vTaskDelay(pdMS_TO_TICKS(5));
     }
