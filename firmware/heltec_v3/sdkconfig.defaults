@@ -23,7 +23,7 @@ CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
 
 # Stack and task tuning. Reticulum loop is spawned with 8192 words of
 # stack from app_main; the main task itself doesn't need to be huge.
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
 # Enable mbedTLS algorithms uReticulum needs (these are usually on by
 # default but listed for clarity).
@@ -63,3 +63,7 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # Allow OTA over plain HTTP (no TLS) for LAN update servers.
 CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
+
+# Default WiFi credentials for testing.
+CONFIG_WIFI_DEFAULT_SSID="BenniNetz"
+CONFIG_WIFI_DEFAULT_PSK="Nishykabi42!"

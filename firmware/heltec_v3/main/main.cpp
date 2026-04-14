@@ -163,6 +163,14 @@ extern "C" void app_main() {
 extern "C" void app_main() {
     ESP_LOGI(TAG, "uReticulum on Heltec V3 starting");
 
+    /* NVS must be initialized before anything that touches it —
+     * WiFi driver, Identity persistence, OTA URL storage, etc. */
+    esp_err_t nvs_rc = nvs_flash_init();
+    if (nvs_rc == ESP_ERR_NVS_NO_FREE_PAGES || nvs_rc == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
+
     /* Mark current firmware as valid so the OTA rollback watchdog
      * doesn't revert us on the next reboot. */
     esp_ota_mark_app_valid_cancel_rollback();
@@ -175,12 +183,15 @@ extern "C" void app_main() {
      * touching the rail. A future rev could shorten I2C traces, add a
      * decoupling cap, or power the OLED from a separate LDO — then we
      * can re-enable light sleep for the last 10 mA of savings. */
+    /* WiFi requires APB ≥ 80 MHz, and DFS transitions garble UART0
+     * output. Pin at 160 MHz when WiFi is configured; otherwise allow
+     * DFS down to 40 MHz for power savings on LoRa-only nodes. */
     esp_pm_config_t pm_config = {};
     pm_config.max_freq_mhz       = 160;
-    pm_config.min_freq_mhz       = 40;
+    pm_config.min_freq_mhz       = 160; /* WiFi needs stable APB clock */
     pm_config.light_sleep_enable = false;
     esp_err_t pm_rc = esp_pm_configure(&pm_config);
-    ESP_LOGI(TAG, "esp_pm_configure = %d (DFS 40-160 MHz, light sleep off)", (int)pm_rc);
+    ESP_LOGI(TAG, "esp_pm_configure = %d (min=%d MHz)", (int)pm_rc, pm_config.min_freq_mhz);
 
     /* PRG button on GPIO0 — internal pull-up, falling-edge interrupt for
      * press detection while awake, low-level wake source for pulling the
@@ -251,13 +262,8 @@ extern "C" void app_main() {
     /* Load or create a persistent identity. The 64-byte private key
      * (32 X25519 + 32 Ed25519) is stored in NVS so the destination
      * hash is stable across reboots — paths, bonds, and peer state
-     * survive power cycles. */
-    esp_err_t nvs_rc = nvs_flash_init();
-    if (nvs_rc == ESP_ERR_NVS_NO_FREE_PAGES || nvs_rc == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        nvs_flash_erase();
-        nvs_flash_init();
-    }
-
+     * survive power cycles. NVS was already initialized at the top
+     * of app_main. */
     RNS::Identity identity(false);  /* don't create keys yet */
     {
         nvs_handle_t h;

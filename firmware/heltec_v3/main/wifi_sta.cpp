@@ -69,23 +69,28 @@ bool init(uint32_t timeout_ms) {
 
     g_wifi_events = xEventGroupCreate();
 
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_err_t err;
+    err = esp_netif_init();
+    if (err != ESP_OK) { ESP_LOGE(TAG, "netif_init: %s", esp_err_to_name(err)); return false; }
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) { ESP_LOGE(TAG, "event_loop: %s", esp_err_to_name(err)); return false; }
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    err = esp_wifi_init(&cfg);
+    if (err != ESP_OK) { ESP_LOGE(TAG, "wifi_init: %s", esp_err_to_name(err)); return false; }
 
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi_event, nullptr);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_ip_event, nullptr);
 
     wifi_config_t sta_cfg = {};
-    memcpy(sta_cfg.sta.ssid, ssid, strlen(ssid));
-    memcpy(sta_cfg.sta.password, psk, strlen(psk));
+    strncpy((char*)sta_cfg.sta.ssid, ssid, sizeof(sta_cfg.sta.ssid) - 1);
+    strncpy((char*)sta_cfg.sta.password, psk, sizeof(sta_cfg.sta.password) - 1);
+    sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
+    esp_wifi_start();
 
     ESP_LOGI(TAG, "connecting to '%s'...", ssid);
     esp_wifi_connect();
