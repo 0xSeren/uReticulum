@@ -204,9 +204,17 @@ namespace {
                 if (event->connect.status == 0) {
                     g_conn_handle = event->connect.conn_handle;
                     g_notify_mtu  = 20;
-                    /* Central initiates MTU exchange once it's ready —
-                     * our peripheral just waits for the BLE_GAP_EVENT_MTU
-                     * callback to raise the notify chunk size. */
+                    /* Relax connection params so the link survives idle
+                     * LoRa periods. Default supervision timeout is too
+                     * tight (~2-6s) for traffic that may be silent for
+                     * minutes between announces. */
+                    struct ble_gap_upd_params p;
+                    memset(&p, 0, sizeof(p));
+                    p.itvl_min = 24;             /* 30ms */
+                    p.itvl_max = 40;             /* 50ms */
+                    p.latency  = 0;
+                    p.supervision_timeout = 3000; /* 30s */
+                    ble_gap_update_params(g_conn_handle, &p);
                 } else {
                     start_advertising();
                 }
@@ -345,8 +353,6 @@ void run(std::shared_ptr<LoraInterface> lora) {
     ESP_LOGI(TAG, "ble_gatts_start     = %d (tx_val_handle=%u)", rc, g_nus_tx_val_handle);
 
     ble_hs_cfg.sync_cb          = on_sync;
-    ble_hs_cfg.store_status_cb  = ble_store_util_status_rr;
-    ble_hs_cfg.reset_cb         = nullptr;
 
     /* Pairing / bonding config. Python RNS BLEConnection refuses to
      * connect to any device that isn't already bonded at the BlueZ
