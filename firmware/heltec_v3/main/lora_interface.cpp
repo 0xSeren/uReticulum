@@ -4,6 +4,7 @@
 
 #include "driver/spi_master.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -64,6 +65,11 @@ bool LoraInterface::start() {
         return false;
     }
 
+    /* Upstream RNode firmware enables CRC on all LoRa packets. Without
+     * this, a real RNode will silently drop our frames (CRC absent →
+     * check fails on the receiver). */
+    _radio->setCRC(1);  /* SX126x: 0=off, 1=on. Matches upstream RNode. */
+
     _radio->setDio1Action(on_dio1);
     state = _radio->startReceive();
     if (state != RADIOLIB_ERR_NONE) {
@@ -100,13 +106,17 @@ void LoraInterface::loop() {
     }
     uint8_t buf[MAX_FRAME];
     int state = _radio->readData(buf, len);
-    if (state == RADIOLIB_ERR_NONE) {
+    if (state == RADIOLIB_ERR_NONE && len > 1) {
+        /* Strip the RNode header byte (first byte) before handing the
+         * payload to Reticulum or the raw-RX callback. For the raw
+         * (RNode bridge) path we keep the header since the host's
+         * RNodeInterface expects to strip it itself. */
         if (_raw_rx) {
             float rssi = _radio->getRSSI();
             float snr  = _radio->getSNR();
             _raw_rx(buf, len, rssi, snr);
         } else {
-            this->handle_incoming(Bytes(buf, len));
+            this->handle_incoming(Bytes(buf + 1, len - 1));
         }
     } else {
         ESP_LOGW(TAG, "readData failed: %d", state);
@@ -116,8 +126,19 @@ void LoraInterface::loop() {
 
 void LoraInterface::send_outgoing(const RNS::Bytes& data) {
     if (!_radio) return;
-    _txb += data.size();
-    int state = _radio->transmit((uint8_t*)data.data(), data.size());
+    /* Prepend the RNode header byte that real RNode firmware adds on
+     * the wire.  Without this, a stock RNode strips the first byte
+     * (treating it as the header) and corrupts the Reticulum frame.
+     * The header is a random nibble in the upper 4 bits; the lower 4
+     * bits carry flags (FLAG_SPLIT for multi-part packets, which we
+     * never generate). */
+    uint8_t buf[Type::Reticulum::MTU + 32];
+    buf[0] = (uint8_t)(esp_random() & 0xF0);
+    size_t len = data.size();
+    if (len > sizeof(buf) - 1) len = sizeof(buf) - 1;
+    memcpy(buf + 1, data.data(), len);
+    _txb += len;
+    int state = _radio->transmit(buf, len + 1);
     if (state != RADIOLIB_ERR_NONE) {
         ESP_LOGW(TAG, "transmit failed: %d", state);
     }
