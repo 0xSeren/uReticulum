@@ -5,6 +5,9 @@ set(SRCS
     "oled.cpp"
     "rnode_bridge.cpp"
     "rnode_ble_bridge.cpp"
+    "wifi_sta.cpp"
+    "tcp_interface.cpp"
+    "ota_update.cpp"
 )
 
 idf_component_register(
@@ -19,4 +22,9 @@ idf_component_register(
         jgromes__RadioLib
         bt
         nvs_flash
+        esp_wifi
+        esp_netif
+        esp_http_client
+        esp_https_ota
+        app_update
 )

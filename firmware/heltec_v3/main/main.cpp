@@ -30,10 +30,15 @@
 #include "ureticulum/reticulum.h"
 #include "ureticulum/transport.h"
 
+#include "esp_ota_ops.h"
+
 #include "heltec_v3_pins.h"
 #include "lora_interface.h"
 #include "oled.h"
+#include "ota_update.h"
 #include "rnode_ble_bridge.h"
+#include "tcp_interface.h"
+#include "wifi_sta.h"
 #include "rnode_bridge.h"
 
 static const char* TAG = "app";
@@ -158,6 +163,10 @@ extern "C" void app_main() {
 extern "C" void app_main() {
     ESP_LOGI(TAG, "uReticulum on Heltec V3 starting");
 
+    /* Mark current firmware as valid so the OTA rollback watchdog
+     * doesn't revert us on the next reboot. */
+    esp_ota_mark_app_valid_cancel_rollback();
+
     /* Dynamic frequency scaling only. True light_sleep_enable=true causes
      * the 3.3V rail to dip 50-100 mV on every wake/sleep transition as
      * the MCU's current draw changes, and the Heltec V3 OLED sits on the
@@ -213,6 +222,31 @@ extern "C" void app_main() {
         HeltecV3::Oled::set_line(4, "LoRa online");
         HeltecV3::Oled::flush();
     }
+
+    /* WiFi STA — bridge LoRa mesh to the Internet via a TCP
+     * connection to an upstream Reticulum node (rnsd). Also
+     * enables OTA firmware updates over HTTP. */
+    bool wifi_up = HeltecV3::WiFiSta::init(15000);
+    if (oled_up) {
+        HeltecV3::Oled::set_line(5, wifi_up ? "WiFi connected" : "WiFi off");
+        HeltecV3::Oled::flush();
+    }
+
+    std::shared_ptr<HeltecV3::TcpInterface> tcp;
+#ifdef CONFIG_TCP_INTERFACE_HOST
+    if (wifi_up && CONFIG_TCP_INTERFACE_HOST[0] != '\0') {
+        tcp = HeltecV3::TcpInterface::create(CONFIG_TCP_INTERFACE_HOST,
+                                              CONFIG_TCP_INTERFACE_PORT);
+        tcp->start();
+        RNS::Transport::register_interface(tcp);
+        ESP_LOGI(TAG, "TCP interface → %s:%d", CONFIG_TCP_INTERFACE_HOST,
+                 CONFIG_TCP_INTERFACE_PORT);
+        if (oled_up) {
+            HeltecV3::Oled::set_line(5, "WiFi+TCP bridge");
+            HeltecV3::Oled::flush();
+        }
+    }
+#endif
 
     /* Load or create a persistent identity. The 64-byte private key
      * (32 X25519 + 32 Ed25519) is stored in NVS so the destination
@@ -318,14 +352,43 @@ extern "C" void app_main() {
     while (true) {
         uint64_t t = now_ms();
 
-        /* Button press → wake display. */
+        /* Button: short press → wake display. Long press (>3s) → OTA. */
         if (g_button_pressed) {
             g_button_pressed = false;
-            ESP_LOGI(TAG, "button pressed, waking display");
-            if (oled_up && HeltecV3::Oled::is_suspended()) {
-                HeltecV3::Oled::resume();
+            uint64_t press_start = t;
+            while (gpio_get_level((gpio_num_t)HELTEC_V3_BUTTON_PRG) == 0) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+                if (now_ms() - press_start > 3000) break;
             }
-            g_display_off_at_ms = t + DISPLAY_ON_MS;
+            uint64_t held = now_ms() - press_start;
+
+            if (held >= 3000 && HeltecV3::WiFiSta::is_connected()) {
+                ESP_LOGI(TAG, "long press — starting OTA");
+                if (oled_up) {
+                    HeltecV3::Oled::resume();
+                    HeltecV3::Oled::set_line(3, "OTA updating...");
+                    HeltecV3::Oled::flush();
+                }
+                if (HeltecV3::OtaUpdate::pull()) {
+                    if (oled_up) {
+                        HeltecV3::Oled::set_line(3, "OTA OK, rebooting");
+                        HeltecV3::Oled::flush();
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    esp_restart();
+                } else {
+                    if (oled_up) {
+                        HeltecV3::Oled::set_line(3, "OTA FAILED");
+                        HeltecV3::Oled::flush();
+                    }
+                }
+            } else {
+                ESP_LOGI(TAG, "button pressed, waking display");
+                if (oled_up && HeltecV3::Oled::is_suspended()) {
+                    HeltecV3::Oled::resume();
+                }
+            }
+            g_display_off_at_ms = now_ms() + DISPLAY_ON_MS;
         }
 
         /* Display timeout → suspend OLED. */
@@ -377,6 +440,9 @@ extern "C" void app_main() {
                 render_status(id_hex, dst_hex, idle);
             }
         }
+
+        /* Poll TCP interface for inbound frames from the Internet. */
+        if (tcp) tcp->loop();
 
         tick++;
         vTaskDelay(pdMS_TO_TICKS(1000));

@@ -47,3 +47,19 @@ CONFIG_FREERTOS_IDLE_TIME_BEFORE_SLEEP=3
 # by the CPU clock we selected; min is 10 MHz; light sleep is entered
 # whenever both are OK.
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
+
+# Heltec V3 has 8MB flash (W25Q64). The default 2MB autodetect is
+# wrong and too small for OTA dual-slot partitions.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# Custom partition table with two OTA slots (~1.75MB each).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# OTA rollback: if new firmware doesn't mark itself valid within 30s
+# the bootloader reverts to the previous slot.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Allow OTA over plain HTTP (no TLS) for LAN update servers.
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y

@@ -34,3 +34,41 @@ menu "uReticulum Heltec V3"
     endchoice
 
 endmenu
+
+menu "uReticulum WiFi + OTA"
+
+    config WIFI_DEFAULT_SSID
+        string "Default WiFi SSID"
+        default ""
+        help
+            WiFi AP to connect to in STA mode. Leave empty to disable
+            WiFi. Can be overridden at runtime via NVS.
+
+    config WIFI_DEFAULT_PSK
+        string "Default WiFi PSK"
+        default ""
+        help
+            WiFi password. Can be overridden at runtime via NVS.
+
+    config TCP_INTERFACE_HOST
+        string "Reticulum TCP peer host"
+        default ""
+        help
+            Hostname or IP of an upstream Reticulum node (rnsd) to
+            connect to over WiFi. Leave empty to disable the TCP
+            interface. The transport node will bridge LoRa ↔ TCP.
+
+    config TCP_INTERFACE_PORT
+        int "Reticulum TCP peer port"
+        default 4965
+        help
+            TCP port of the upstream Reticulum node.
+
+    config OTA_DEFAULT_URL
+        string "Default OTA firmware URL"
+        default ""
+        help
+            HTTP URL to pull firmware from on OTA update. Example:
+            http://192.168.1.100:8080/ureticulum.bin
+
+endmenu
