@@ -21,6 +21,9 @@
 
 #include "sdkconfig.h"
 
+#include "nvs_flash.h"
+#include "nvs.h"
+
 #include "ureticulum/destination.h"
 #include "ureticulum/identity.h"
 #include "ureticulum/link.h"
@@ -211,7 +214,46 @@ extern "C" void app_main() {
         HeltecV3::Oled::flush();
     }
 
-    RNS::Identity identity;
+    /* Load or create a persistent identity. The 64-byte private key
+     * (32 X25519 + 32 Ed25519) is stored in NVS so the destination
+     * hash is stable across reboots — paths, bonds, and peer state
+     * survive power cycles. */
+    esp_err_t nvs_rc = nvs_flash_init();
+    if (nvs_rc == ESP_ERR_NVS_NO_FREE_PAGES || nvs_rc == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
+
+    RNS::Identity identity(false);  /* don't create keys yet */
+    {
+        nvs_handle_t h;
+        bool loaded = false;
+        if (nvs_open("ureticulum", NVS_READONLY, &h) == ESP_OK) {
+            size_t len = 0;
+            if (nvs_get_blob(h, "id_prv", nullptr, &len) == ESP_OK && len == 64) {
+                uint8_t key[64];
+                nvs_get_blob(h, "id_prv", key, &len);
+                RNS::Bytes kb(key, 64);
+                if (identity.load_private_key(kb)) {
+                    loaded = true;
+                    ESP_LOGI(TAG, "loaded identity from NVS");
+                }
+            }
+            nvs_close(h);
+        }
+        if (!loaded) {
+            identity.createKeys();
+            RNS::Bytes prv = identity.get_private_key();
+            nvs_handle_t wh;
+            if (nvs_open("ureticulum", NVS_READWRITE, &wh) == ESP_OK) {
+                nvs_set_blob(wh, "id_prv", prv.data(), prv.size());
+                nvs_commit(wh);
+                nvs_close(wh);
+                ESP_LOGI(TAG, "created + saved new identity to NVS");
+            }
+        }
+    }
+
     RNS::Destination dest(identity,
                           RNS::Type::Destination::IN,
                           RNS::Type::Destination::SINGLE,
