@@ -1,5 +1,11 @@
 # uReticulum
 
+> **WIP** - uReticulum is under active development. The core protocol
+> (Identity, Destination, Packet, Link, Transport) works and interoperates
+> with upstream Python Reticulum and real RNode hardware. Missing features
+> include announce rate limiting, path expiry, ratchets, IFAC, Channel,
+> and Buffer. See [TODO](TODO) for the full list.
+
 A fast, power efficient, native [Reticulum](https://reticulum.network) stack for embedded microcontrollers.
 
 | | RNode | microReticulum | uReticulum |

@@ -1,0 +1,31 @@
+Transport
+  - Announce queue with rate limiting
+  - Path expiry and table culling
+  - Packet caching
+  - Tunnel support
+  - Path request/response protocol (request_path API)
+
+Link
+  - RTT measurement
+  - Keepalive and watchdog timeouts
+  - Link teardown negotiation
+  - Ratchets (forward secrecy key rotation)
+  - Establishment rate/cost metrics
+
+Missing protocol features
+  - IFAC (per-interface HMAC auth codes)
+  - Channel (multiplexed channels over Link)
+  - Buffer (streaming buffer over Channel)
+  - Resource hash verification of assembled payload
+
+Firmware
+  - BLE long-lived connection drops in RNS wrapper (upstream RNS issue, our side holds 120s+)
+  - Channel stats commands (CMD_STAT_CHTM, CMD_STAT_PHYPRM) - RNS polls these periodically
+  - rnodeconf ROM/EEPROM read support
+  - RAK3172 / STM32WLE5 port (Cortex-M4F HAL, different toolchain)
+  - Light sleep with proper OLED decoupling for field deployment
+  - WiFi TCPInterface (ESP32-S3 has WiFi, bridge to rnsd over network)
+
+New capabilities
+  - LXMF propagation node (standalone store-and-forward on MCU)
+  - LXMF delivery endpoint (receive messages on MCU without host)

@@ -31,10 +31,12 @@
 #define HELTEC_V3_VBAT_ADC    1
 #define HELTEC_V3_VBAT_CTRL   37
 
-/* LoRa parameters. US ISM is 902-928 MHz; we sit at 915 MHz center. */
-#define HELTEC_V3_LORA_FREQ_MHZ          915.0
-#define HELTEC_V3_LORA_BANDWIDTH_KHZ     125.0
-#define HELTEC_V3_LORA_SPREADING_FACTOR  9
-#define HELTEC_V3_LORA_CODING_RATE       7
-#define HELTEC_V3_LORA_TX_POWER_DBM      14
-#define HELTEC_V3_LORA_PREAMBLE_LENGTH   8
+/* LoRa parameters — sourced from menuconfig (uReticulum LoRa menu).
+ * Frequency is stored as MHz*10 in Kconfig (int) to avoid float. */
+#include "sdkconfig.h"
+#define HELTEC_V3_LORA_FREQ_MHZ          (CONFIG_LORA_FREQ_MHZ_X10 / 10.0f)
+#define HELTEC_V3_LORA_BANDWIDTH_KHZ     ((float)CONFIG_LORA_BANDWIDTH_KHZ)
+#define HELTEC_V3_LORA_SPREADING_FACTOR  CONFIG_LORA_SPREADING_FACTOR
+#define HELTEC_V3_LORA_CODING_RATE       CONFIG_LORA_CODING_RATE
+#define HELTEC_V3_LORA_TX_POWER_DBM      CONFIG_LORA_TX_POWER_DBM
+#define HELTEC_V3_LORA_PREAMBLE_LENGTH   CONFIG_LORA_PREAMBLE_LENGTH

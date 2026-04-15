@@ -35,6 +35,58 @@ menu "uReticulum Heltec V3"
 
 endmenu
 
+menu "uReticulum LoRa"
+
+    config LORA_FREQ_MHZ_X10
+        int "Frequency (MHz x10, e.g. 9150 = 915.0 MHz)"
+        default 9150
+        help
+            LoRa center frequency in tenths of MHz. Multiply your desired
+            frequency by 10: 915.0 MHz = 9150, 868.0 MHz = 8680,
+            433.0 MHz = 4330. Tenths allow sub-MHz precision without
+            floating point in Kconfig.
+
+    config LORA_BANDWIDTH_KHZ
+        int "Bandwidth (kHz)"
+        default 125
+        range 8 500
+        help
+            LoRa bandwidth in kHz. Common values: 125, 250, 500.
+            Must match the peer's bandwidth.
+
+    config LORA_SPREADING_FACTOR
+        int "Spreading factor"
+        default 9
+        range 5 12
+        help
+            LoRa spreading factor (5-12). Higher SF = longer range but
+            slower. SF9 is a good default for Reticulum on 915 MHz.
+
+    config LORA_CODING_RATE
+        int "Coding rate"
+        default 7
+        range 5 8
+        help
+            LoRa coding rate (5-8). Higher = more error correction but
+            slower. 7 matches upstream RNode defaults.
+
+    config LORA_TX_POWER_DBM
+        int "TX power (dBm)"
+        default 14
+        range 2 22
+        help
+            Transmit power in dBm. SX1262 supports 2-22 dBm.
+            14 dBm is a reasonable default for short-range testing.
+
+    config LORA_PREAMBLE_LENGTH
+        int "Preamble length (symbols)"
+        default 8
+        range 4 65535
+        help
+            LoRa preamble length in symbols. 8 is the standard default.
+
+endmenu
+
 menu "uReticulum WiFi + OTA"
 
     config WIFI_DEFAULT_SSID
