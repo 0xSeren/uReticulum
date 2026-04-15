@@ -106,3 +106,13 @@ The node's 64-byte Ed25519+X25519 private key is stored in NVS on first
 boot and reused across reboots. The destination hash is stable: peers
 don't need to re-discover the node after a power cycle.
 
+## Credits
+
+The Reticulum protocol implementation in uReticulum is based on
+[microReticulum](https://github.com/attermann/microReticulum) by Scott
+Attermann, a C++ port of the [Reticulum Network
+Stack](https://github.com/markqvist/Reticulum) by Mark Qvist.
+uReticulum builds on microReticulum's protocol core (Identity,
+Destination, Packet, Link, Transport) and adapts it for FreeRTOS with
+hardware-accelerated crypto, RadioLib radio drivers, and power-managed
+embedded operation.
