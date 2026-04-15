@@ -121,4 +121,14 @@ Bytes Destination::announce(const Bytes& app_data, bool send) const {
     return raw;
 }
 
+void Destination::register_request_handler(const char* path, ResponseGenerator gen) {
+    Bytes path_bytes(reinterpret_cast<const uint8_t*>(path), strlen(path));
+    Bytes ph = Identity::truncated_hash(path_bytes);
+    RequestHandler rh;
+    rh.path      = path_bytes;
+    rh.path_hash = ph;
+    rh.generator = std::move(gen);
+    _object->_request_handlers[ph] = std::move(rh);
+}
+
 }

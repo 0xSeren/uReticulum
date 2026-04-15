@@ -2,6 +2,7 @@
 
 #include "ureticulum/cryptography/hkdf.h"
 #include "ureticulum/log.h"
+#include "ureticulum/msgpack.h"
 #include "ureticulum/packet.h"
 #include "ureticulum/transport.h"
 
@@ -183,12 +184,64 @@ void Link::send(const Bytes& plaintext) {
     Transport::broadcast(raw);
 }
 
+void Link::send_with_context(const Bytes& plaintext, uint8_t context) {
+    if (_status != ACTIVE || !_token) return;
+    Bytes ciphertext = _token->encrypt(plaintext);
+    Bytes raw;
+    uint8_t flags = (Type::Packet::HEADER_1 << 6)
+                  | (Type::Transport::BROADCAST << 4)
+                  | (Type::Destination::LINK << 2)
+                  | Type::Packet::DATA;
+    raw << flags << uint8_t{0} << _hash << uint8_t{context} << ciphertext;
+    Transport::broadcast(raw);
+}
+
 void Link::on_inbound(const Packet& packet) {
     if (_status != ACTIVE || !_token) return;
     if (packet.packet_type() != Type::Packet::DATA) return;
     Bytes plaintext = _token->decrypt(packet.data());
     if (plaintext.empty()) return;
-    if (_on_packet) _on_packet(plaintext, *this);
+
+    uint8_t ctx = packet.context();
+    if (ctx == Type::Packet::REQUEST) {
+        handle_request(plaintext);
+    } else {
+        if (_on_packet) _on_packet(plaintext, *this);
+    }
+}
+
+void Link::handle_request(const Bytes& plaintext) {
+    /* Compute request_id = truncated_hash(plaintext). */
+    Bytes request_id = Identity::truncated_hash(plaintext);
+
+    /* Unpack msgpack: [timestamp, path_hash, data] */
+    MsgPack::Reader r(plaintext);
+    size_t arr = r.read_array_header();
+    if (arr < 3) return;
+    double requested_at = r.read_float64();
+    Bytes path_hash     = r.read_bin();
+    Bytes request_data;
+    if (!r.read_nil()) request_data = r.read_bin();
+
+    /* Look up handler in destination's request_handlers map. */
+    auto& handlers = _destination.request_handlers();
+    auto it = handlers.find(path_hash);
+    if (it == handlers.end()) return;
+
+    const auto& handler = it->second;
+    Bytes response = handler.generator(
+        handler.path, request_data, request_id,
+        _hash, Identity{Type::NONE}, requested_at);
+
+    if (response.empty()) return;
+
+    /* Pack response: [request_id, response_bytes] */
+    Bytes packed;
+    MsgPack::pack_array_header(packed, 2);
+    MsgPack::pack_bin(packed, request_id);
+    MsgPack::pack_bin(packed, response);
+
+    send_with_context(packed, Type::Packet::RESPONSE);
 }
 
 }

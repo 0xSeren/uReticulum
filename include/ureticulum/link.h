@@ -58,6 +58,7 @@ namespace RNS {
 
         /* Send an encrypted application payload over the link. */
         void send(const Bytes& plaintext);
+        void send_with_context(const Bytes& plaintext, uint8_t context);
 
         /* Called by Transport when a frame addressed to this link's hash
          * arrives. Decrypts and dispatches to the packet callback. */
@@ -79,6 +80,7 @@ namespace RNS {
         Link(const Destination& destination, bool initiator);
         void derive_keys();
         bool open_session_from_peer_pub(const Bytes& peer_x25519_pub);
+        void handle_request(const Bytes& plaintext);
 
         Destination _destination;
         bool        _initiator     = false;

@@ -8,6 +8,7 @@ set(SRCS
     "wifi_sta.cpp"
     "tcp_interface.cpp"
     "ota_update.cpp"
+    "nomadnet_node.cpp"
 )
 
 idf_component_register(

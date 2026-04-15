@@ -33,6 +33,7 @@
 #include "esp_ota_ops.h"
 
 #include "heltec_v3_pins.h"
+#include "nomadnet_node.h"
 #include "lora_interface.h"
 #include "oled.h"
 #include "ota_update.h"
@@ -346,6 +347,11 @@ extern "C" void app_main() {
     if (!RNS::Reticulum::start(/*tick_ms=*/50, /*stack_words=*/8192, /*priority=*/5)) {
         ESP_LOGE(TAG, "Reticulum::start failed");
     }
+
+    /* Start a nomadnet-compatible node so users can browse pages hosted
+     * directly on this ESP32. The node name is what appears in the
+     * nomadnet browser's directory. */
+    HeltecV3::NomadnetNode::start(identity, "uReticulum Heltec V3");
 
     /* Display stays on for DISPLAY_ON_MS after boot so the user can read
      * the identity hash. */

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,11 +14,22 @@ namespace RNS {
 
     class Packet;
 
-    /* Phase 3 cut: SINGLE / IN+OUT only. No Link tracking, no announce, no
-     * request handlers. Phase 4-5 add the rest. */
     class Destination {
     public:
         using PacketCallback = std::function<void(const Bytes& data, const Packet& packet)>;
+
+        /* Request handler: called when a peer sends a Link request to a
+         * registered path. Returns response bytes (or empty to send no
+         * response). Signature matches Python Reticulum's response_generator. */
+        using ResponseGenerator = std::function<Bytes(
+            const Bytes& path, const Bytes& data, const Bytes& request_id,
+            const Bytes& link_id, const Identity& remote_identity, double requested_at)>;
+
+        struct RequestHandler {
+            Bytes path;
+            Bytes path_hash;
+            ResponseGenerator generator;
+        };
 
         Destination(Type::NoneConstructor) {}
         Destination(const Destination& other) : _object(other._object) {}
@@ -41,6 +53,12 @@ namespace RNS {
         static Bytes name_hash(const char* app_name, const char* aspects);
 
         void set_packet_callback(PacketCallback cb) { _object->_packet_callback = std::move(cb); }
+
+        /* Register a request handler for a named path (e.g. "/page/index.mu").
+         * When a peer sends a Link REQUEST with the corresponding path_hash,
+         * the generator is called and the response is sent back. */
+        void register_request_handler(const char* path, ResponseGenerator gen);
+        const std::map<Bytes, RequestHandler>& request_handlers() const { return _object->_request_handlers; }
 
         Bytes encrypt(const Bytes& data) const;
         Bytes decrypt(const Bytes& data) const;
@@ -71,6 +89,7 @@ namespace RNS {
             Bytes                         _name_hash;
             std::string                   _hexhash;
             PacketCallback                _packet_callback;
+            std::map<Bytes, RequestHandler> _request_handlers;
         };
         std::shared_ptr<Object> _object;
     };
