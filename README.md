@@ -9,7 +9,7 @@ A fast, power efficient, native [Reticulum](https://reticulum.network) stack for
 | WiFi + TCP bridge | No | No | Yes |
 | BLE bridge | Bluedroid | No | NimBLE |
 | OTA updates | No | No | Yes |
-| FreeRTOS idle sleep | No (Arduino loop) | No | 99% idle |
+| Sleep | No (Arduino loop) | No | 99% idle |
 | Hardware crypto | No | No | mbedTLS accelerated |
 | Radio driver | Arduino-LoRa | Arduino-LoRa | RadioLib (SX1262 native) |
 
