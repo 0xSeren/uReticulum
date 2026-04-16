@@ -1,6 +1,8 @@
-# uReticulum
+# RTReticulum
 
-> **WIP** - uReticulum is under active development. The core protocol
+*Realtime Reticulum: a native Reticulum stack for microcontrollers.*
+
+> **WIP** - RTReticulum is under active development. The core protocol
 > (Identity, Destination, Packet, Link, Transport) works and interoperates
 > with upstream Python Reticulum and real RNode hardware. Missing features
 > include announce rate limiting, path expiry, ratchets, IFAC, Channel,
@@ -8,7 +10,7 @@
 
 A fast, power efficient, native [Reticulum](https://reticulum.network) stack for embedded microcontrollers.
 
-| | RNode | microReticulum | uReticulum |
+| | RNode | microReticulum | RTReticulum |
 |---|---|---|---|
 | Autonomous node | No (host-driven modem) | Yes | Yes |
 | NomadNet pages | No | No | Yes |
@@ -45,11 +47,11 @@ A fast, power efficient, native [Reticulum](https://reticulum.network) stack for
 
 ## Build
 
-uReticulum uses Nix for reproducible builds. All toolchains (ESP-IDF,
+RTReticulum uses Nix for reproducible builds. All toolchains (ESP-IDF,
 ARM GCC, host compilers, mbedTLS, Monocypher) come from `flake.nix`.
 
 ```bash
-cd uReticulum
+cd RTReticulum
 nix develop
 ```
 
@@ -71,7 +73,7 @@ idf.py -p /dev/ttyUSB0 flash
 ## Firmware modes
 
 The Heltec V3 firmware supports three operating modes, selectable via
-`idf.py menuconfig` under **uReticulum Heltec V3**:
+`idf.py menuconfig` under **RTReticulum Heltec V3**:
 
 ### Transport node (default)
 
@@ -83,7 +85,7 @@ WiFi + TCP. It hosts a NomadNet-compatible page with live system metrics.
 
 The board exposes the SX1262 as an RNode over USB serial using the KISS
 protocol. Python Reticulum (`rnsd`, NomadNet, Sideband) can drive it
-directly with `interface_type = RNodeInterface`. The uReticulum stack is
+directly with `interface_type = RNodeInterface`. The RTReticulum stack is
 not started: the board is a dumb radio modem.
 
 ### RNode bridge (Bluetooth LE)
@@ -95,7 +97,7 @@ Service BLE GATT profile. Connect from Python RNS with
 ## Configuration
 
 WiFi and TCP bridge settings are under `idf.py menuconfig` →
-**uReticulum WiFi**:
+**RTReticulum WiFi**:
 
 | Setting | Description | Default |
 |---|---|---|
@@ -114,11 +116,11 @@ don't need to re-discover the node after a power cycle.
 
 ## Credits
 
-The Reticulum protocol implementation in uReticulum is based on
+The Reticulum protocol implementation in RTReticulum is based on
 [microReticulum](https://github.com/attermann/microReticulum) by Chad
 Attermann, a C++ port of the [Reticulum Network
 Stack](https://github.com/markqvist/Reticulum) by Mark Qvist.
-uReticulum builds on microReticulum's protocol core (Identity,
+RTReticulum builds on microReticulum's protocol core (Identity,
 Destination, Packet, Link, Transport) and adapts it for FreeRTOS with
 hardware-accelerated crypto, RadioLib radio drivers, and power-managed
 embedded operation.
