@@ -115,7 +115,7 @@ don't need to re-discover the node after a power cycle.
 ## Credits
 
 The Reticulum protocol implementation in uReticulum is based on
-[microReticulum](https://github.com/attermann/microReticulum) by Scott
+[microReticulum](https://github.com/attermann/microReticulum) by Chad
 Attermann, a C++ port of the [Reticulum Network
 Stack](https://github.com/markqvist/Reticulum) by Mark Qvist.
 uReticulum builds on microReticulum's protocol core (Identity,
